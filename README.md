@@ -25,17 +25,8 @@ Example questions the agent is designed to answer:
 
 ## 🏗️ Architecture (Local-First)
 
-Whoop API
-↓
-Local Ingestion (Python / Cron)
-↓
-Parquet / Iceberg (Local Storage)
-↓
-FastAPI Data Access Layer (MCP-style)
-↓
-LangGraph AI Agent (LLM-powered)
-↓
-Streamlit / Web UI (Chat + Visualizations)
+Whoop API -> Local Ingestion (Python / Cron) -> Parquet / Iceberg (Local Storage)
+-> FastAPI Data Access Layer (MCP-style) -> LangGraph AI Agent (LLM-powered)-> Streamlit / Web UI (Chat + Visualizations)
 
 ---
 
