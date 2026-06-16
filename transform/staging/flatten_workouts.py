@@ -96,6 +96,7 @@ ICEBERG_SCHEMA = Schema(
     NestedField(22, "zone_four_milli",       LongType()),                         # 80-90% max HR
     NestedField(23, "zone_five_milli",       LongType()),                         # 90-100% max HR
     NestedField(24, "ingested_at",           TimestamptzType()),                  # When we pulled it from Whoop API
+    NestedField(25, "cycle_id",              LongType()),                         # Parent cycle (join key to silver.cycles)
 )
 
 # Partition by day of start_time (source_id=5 matches workout_id field 5 above)
@@ -135,6 +136,7 @@ ARROW_SCHEMA = pa.schema([
     pa.field("zone_four_milli",       pa.int64()),
     pa.field("zone_five_milli",       pa.int64()),
     pa.field("ingested_at",           pa.timestamp("us", tz="UTC")),
+    pa.field("cycle_id",              pa.int64()),
 ])
 
 
@@ -229,6 +231,7 @@ def flatten_record(record: dict, ingested_at: str) -> dict:
         "zone_four_milli":       zones.get("zone_four_milli"),
         "zone_five_milli":       zones.get("zone_five_milli"),
         "ingested_at":           parse_ts(ingested_at),
+        "cycle_id":              record.get("cycle_id"),
     }
 
 
@@ -348,11 +351,18 @@ def main():
     # Step 7: Write data to the Iceberg table
     full_name = f"{NAMESPACE}.{TABLE_NAME}"
     try:
-        # Table already exists — overwrite it
-        # overwrite() atomically replaces all data and records a new snapshot in the catalog.
-        # The old snapshot is still in history (time travel still works).
+        # Table already exists — evolve schema if needed, then overwrite
         table = catalog.load_table(full_name)
         print(f"Loaded existing table '{full_name}'")
+
+        existing_names = {f.name for f in table.schema().fields}
+        missing = [f for f in ICEBERG_SCHEMA.fields if f.name not in existing_names]
+        if missing:
+            with table.update_schema() as upd:
+                for f in missing:
+                    upd.add_column(f.name, f.field_type)
+            print(f"Schema evolved: added {[f.name for f in missing]}")
+
         table.overwrite(arrow_table)
     except NoSuchTableError:
         # First run — create the table with our schema and partition spec, then append data
