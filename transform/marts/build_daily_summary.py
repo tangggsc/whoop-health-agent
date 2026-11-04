@@ -20,7 +20,10 @@ Join model:
   recovery    one per cycle_id            -> left join on cycle_id
   sleep       many per cycle_id           -> pick the main sleep (recovery.sleep_id,
                                              else longest non-nap sleep for the cycle)
-  workouts    many per cycle_id           -> aggregate (count + sums) per cycle_id
+  workouts    many per cycle              -> assigned to the cycle whose time window
+                                             contains the workout start, then aggregated.
+                                             (silver.workouts.cycle_id is not populated by
+                                             the Whoop API, so we match on time, not key.)
 
 Usage:
     cd api && python ../transform/marts/build_daily_summary.py
@@ -32,6 +35,7 @@ Usage:
     #   python ../transform/process/flatten_workouts.py
 """
 
+import bisect
 import os
 import sys
 from datetime import datetime, timezone, timedelta, date
@@ -280,14 +284,41 @@ def pick_main_sleep(cycle_id: int, recovery: dict | None,
     return max(pool, key=duration)
 
 
-def aggregate_workouts(workouts: list[dict]) -> dict[int, dict]:
-    """Roll workouts up to one summary per cycle_id."""
+def assign_workouts_to_cycles(workouts: list[dict],
+                              cycles: list[dict]) -> tuple[dict[int, dict], int]:
+    """
+    Roll workouts up to one summary per cycle by TIME, not by key.
+
+    silver.workouts.cycle_id is null (the Whoop v2 workout API doesn't return it),
+    so we assign each workout to the cycle whose [start_time, end_time) window
+    contains the workout's start_time. An open cycle (null end) extends to +inf.
+    Returns (aggregates_by_cycle_id, count_of_unassigned_workouts).
+    """
+    dated = sorted(
+        (c for c in cycles if c.get("start_time") is not None),
+        key=lambda c: c["start_time"],
+    )
+    starts = [c["start_time"] for c in dated]
+    far_future = datetime.max.replace(tzinfo=timezone.utc)
+
     agg: dict[int, dict] = {}
+    unassigned = 0
     for w in workouts:
-        cid = w.get("cycle_id")
-        if cid is None:
+        ws = w.get("start_time")
+        if ws is None:
+            unassigned += 1
             continue
-        a = agg.setdefault(cid, {
+        # Last cycle whose start_time <= workout start.
+        idx = bisect.bisect_right(starts, ws) - 1
+        if idx < 0:
+            unassigned += 1
+            continue
+        cycle = dated[idx]
+        end = cycle.get("end_time") or far_future
+        if not (cycle["start_time"] <= ws < end):
+            unassigned += 1
+            continue
+        a = agg.setdefault(cycle["cycle_id"], {
             "workout_count": 0,
             "strain": [],
             "kilojoule": [],
@@ -299,7 +330,7 @@ def aggregate_workouts(workouts: list[dict]) -> dict[int, dict]:
         a["kilojoule"].append(w.get("kilojoule"))
         a["duration_min"].append(minutes_between(w.get("start_time"), w.get("end_time")))
         a["distance_m"].append(w.get("distance_meter"))
-    return agg
+    return agg, unassigned
 
 
 def build_row(cycle: dict, recovery: dict | None, sleep: dict | None,
@@ -400,7 +431,7 @@ def main():
         cid = s.get("cycle_id")
         if cid is not None:
             sleep_by_cycle.setdefault(cid, []).append(s)
-    workout_agg = aggregate_workouts(workouts)
+    workout_agg, unassigned_workouts = assign_workouts_to_cycles(workouts, cycles)
 
     # Step 3: Build one conformed row per cycle.
     built_at = datetime.now(timezone.utc)
@@ -421,7 +452,8 @@ def main():
     rows.sort(key=lambda r: r["cycle_start"] or datetime.min.replace(tzinfo=timezone.utc))
     print(f"\nBuilt {len(rows)} daily row(s): "
           f"{matched_recovery} with recovery, {matched_sleep} with sleep, "
-          f"{len(workout_agg)} day(s) with workouts.")
+          f"{len(workout_agg)} day(s) with workouts "
+          f"({unassigned_workouts} workout(s) unmatched to a cycle).")
 
     arrow_table = dicts_to_arrow(rows)
 

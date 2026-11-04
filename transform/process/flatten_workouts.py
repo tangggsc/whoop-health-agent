@@ -96,8 +96,10 @@ ICEBERG_SCHEMA = Schema(
     NestedField(22, "zone_four_milli",       LongType()),                         # 80-90% max HR
     NestedField(23, "zone_five_milli",       LongType()),                         # 90-100% max HR
     NestedField(24, "ingested_at",           TimestamptzType()),                  # When we pulled it from Whoop API
-    NestedField(25, "cycle_id",              LongType()),                         # Parent cycle (join key to silver.cycles)
 )
+# Note: the v2 /activity/workout endpoint returns NO cycle reference (no cycle_id
+# or cycle field), unlike recovery and sleep. Workouts are standalone activities,
+# so the gold layer associates them to a cycle by time window, not by key.
 
 # Partition by day of start_time (source_id=5 matches workout_id field 5 above)
 # This means Iceberg organizes data files by day — Trino skips irrelevant days on date queries
@@ -136,7 +138,6 @@ ARROW_SCHEMA = pa.schema([
     pa.field("zone_four_milli",       pa.int64()),
     pa.field("zone_five_milli",       pa.int64()),
     pa.field("ingested_at",           pa.timestamp("us", tz="UTC")),
-    pa.field("cycle_id",              pa.int64()),
 ])
 
 
@@ -231,7 +232,6 @@ def flatten_record(record: dict, ingested_at: str) -> dict:
         "zone_four_milli":       zones.get("zone_four_milli"),
         "zone_five_milli":       zones.get("zone_five_milli"),
         "ingested_at":           parse_ts(ingested_at),
-        "cycle_id":              record.get("cycle_id"),
     }
 
 
