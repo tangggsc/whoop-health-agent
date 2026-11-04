@@ -25,23 +25,23 @@ Example questions the agent is designed to answer:
 
 ## 🏗️ Architecture (Local-First)
 ```
-Whoop API -> Local Ingestion (Python / Cron) 
-  -> Raw Layer (JSON storage)
-  -> Process Layer (flattened/cleaned)
-  -> Staging Layer (normalized schemas)
-  -> Marts Layer (analytics-ready models)
-  -> Iceberg Tables (Parquet files + metadata)
-  -> FastAPI Data Access Layer (MCP-style) 
+Whoop API -> Local Ingestion (Python)
+  -> Bronze Layer — raw JSON (MinIO object storage)
+  -> Silver Layer — flattened, typed, deduped per-domain Iceberg tables
+  -> Gold Layer  — conformed, analytics-ready Iceberg models
+  -> FastAPI Data Access Layer (MCP-style)
   -> LangGraph AI Agent (LLM-powered)
   -> Streamlit / Web UI (Chat + Visualizations)
 ```
 
-**Data Flow:**
-- **Raw → Process → Staging → Marts**: Python-based transformation pipeline
-- **Iceberg**: Table format for ACID transactions, schema evolution, and time travel
-- **Storage**: MinIO (S3-compatible) for Parquet files and Iceberg metadata
-- **Query**: Trino for SQL access to Iceberg tables
-- **Serve**: FastAPI exposes data to AI agent via MCP protocol
+**Data Flow (medallion: Bronze → Silver → Gold):**
+- **Bronze** — raw Whoop v2 API JSON, one file per endpoint page per day. Written by `api/whoop_*_backfill.py`.
+- **Silver** — one flat Iceberg table per domain (`cycles`, `recovery`, `sleep`, `workouts`): nested JSON flattened, types cast, deduped by id. Written by `transform/process/flatten_*.py`.
+- **Gold** — conformed models that join domains for the agent/UI (`daily_summary`: one row per cycle, units normalized, workouts rolled up). Written by `transform/marts/build_daily_summary.py`.
+- **Iceberg**: table format for ACID transactions, schema evolution, and time travel.
+- **Storage**: MinIO (S3-compatible) for Parquet data + Iceberg metadata.
+- **Query**: Trino for SQL access to Iceberg tables.
+- **Serve**: FastAPI exposes data to the AI agent via MCP protocol.
 
 ---
 
@@ -59,24 +59,20 @@ Whoop API -> Local Ingestion (Python / Cron)
 ## 🚧 Project Status
 
 ### ✅ Completed
-- [x] API ingestion layer (raw layer)
-  - Whoop API client with authentication
-  - Raw JSON storage for workout data
-
-### 🔨 In Progress
-- [ ] Process layer
-  - Flatten and transform raw JSON
-  - Data type conversion and cleaning
+- [x] Lakehouse infrastructure — MinIO + Hive metastore + Trino + Iceberg (`orchestration/docker-compose.yml`)
+- [x] Bronze layer — Whoop v2 API client + auth, raw JSON ingestion for cycles, recovery, sleep, and workouts
+- [x] Silver layer — flatten / clean / dedupe into per-domain Iceberg tables (`cycles`, `recovery`, `sleep`, `workouts`)
+- [x] Gold layer — `gold.daily_summary` conformed daily model (one row per cycle: strain + recovery + sleep + workout rollup, units normalized)
 
 ### 📋 Planned
-- [ ] Staging layer (normalized schemas)
-- [ ] Marts layer (analytics models)
-- [ ] Data storage (Parquet/Iceberg setup)
-- [ ] FastAPI data access layer
-- [ ] LangGraph AI agent
-- [ ] Streamlit UI
-- [ ] Query engine integration (Trino)
+- [ ] FastAPI data access layer (MCP-style)
+- [ ] LangGraph AI agent (LLM-powered)
+- [ ] Streamlit / Web UI
+- [ ] Orchestration (Airflow) + incremental daily ingestion
+
+### ⚠️ Known Gaps
+- Backfill date ranges differ across domains (workouts cover 2025-10 → 2026-01, cycles 2025-12 → 2026-04), so only the overlapping window has complete cross-domain coverage. Re-running the cycle / recovery / sleep backfills over the full workout window will close this.
 
 ### Current Focus
-Building data pipeline foundation (raw → process → staging → marts) before implementing AI agent and UI.
+Transform pipeline foundation is complete (Bronze → Silver → Gold). Next: the FastAPI data access layer so the AI agent can query `gold.daily_summary`.
 
