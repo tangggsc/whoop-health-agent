@@ -5,7 +5,7 @@ Reads:  s3://whoop-lakehouse/bronze/whoop/workout/dt=YYYY-MM-DD/*.json
 Writes: s3://whoop-lakehouse/warehouse/silver/workouts  (Iceberg, partitioned by date)
 
 Usage:
-    cd api && python ../transform/staging/flatten_workouts.py
+    cd api && python ../transform/process/flatten_workouts.py
 """
 
 import json
