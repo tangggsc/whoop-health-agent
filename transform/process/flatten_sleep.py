@@ -5,7 +5,7 @@ Reads:  s3://whoop-lakehouse/bronze/whoop/sleep/dt=YYYY-MM-DD/*.json
 Writes: s3://whoop-lakehouse/warehouse/silver/sleep  (Iceberg, partitioned by day)
 
 Usage:
-    cd api && python ../transform/staging/flatten_sleep.py
+    cd api && python ../transform/process/flatten_sleep.py
 
 Raw sleep record shape from Whoop API:
 {
